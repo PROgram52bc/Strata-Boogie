@@ -56,6 +56,18 @@ finch build --platform linux/amd64 -t smack .
 `--platform linux/amd64` is required: SMACK's dependencies (dotnet-sdk-5.0, Z3
 x86_64 binaries) are not available for ARM64.
 
+### SMACK version
+
+The `Dockerfile` pins SMACK (`SMACK_REF`, default `v2.10.0`) so the generated
+Boogie is reproducible — a floating clone drifts with SMACK's frontend. This
+matters for translation: some SMACK releases emit control flow the translator
+does not yet reduce (e.g. a two-target `goto` whose arms are not obvious
+inverses raises `Unsupported: goto with two targets that aren't obvious
+inverses`). If translation of a freshly generated `.bpl` fails on such a goto,
+pin `SMACK_REF` to the release that produced your reference corpus and rebuild
+the image. Override at build time with `--build-arg`-style env, e.g.
+`SMACK_REF=<tag-or-commit>`.
+
 ## Usage
 
 Put your C sources in a directory (default `smack-pipeline/programs/`) and run:
