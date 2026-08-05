@@ -1,0 +1,9 @@
+# Generated pipeline artifacts — only .c sources (added by the user) are tracked.
+*.bpl
+*.bc
+*.ll
+*_stripped.bpl
+*.symtab.json
+*.goto.json
+*.gb
+*.core.st
