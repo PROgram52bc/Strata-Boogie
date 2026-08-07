@@ -4,19 +4,19 @@
 Pipeline:
 
     .c  --SMACK-->  .bpl  --strip_smack_prelude-->  _stripped.bpl
-        --BoogieToStrata --smack-->  .core.st  --fix_core_st-->  _fixed.core.st
+        --BoogieToStrata --smack-->  .core.st
 
 SMACK runs in a container (see Dockerfile). BoogieToStrata is the translator in
-this repository; this script drives its `--smack` mode. The two Python stages on
-either side of the translator are the SMACK-specific pre/post-processing:
+this repository; this script drives its `--smack` mode. One Python stage runs
+before the translator:
 
   - strip_smack_prelude.py — remove SMACK prelude procedure bodies (unstructured
     multi-target gotos the translator cannot ingest) and inline __VERIFIER_assume.
-  - fix_core_st.py — topologically sort function definitions and rename parameters
-    that shadow type names.
 
-The output `_fixed.core.st` files are ready for `strata verify`; running the
-verifier is out of scope for this script (it lives in the main Strata package).
+The translator emits functions in dependency order and renames type-shadowing
+parameters itself, so no post-processing of its output is needed. The output
+`.core.st` files are ready for `strata verify`; running the verifier is out of
+scope for this script (it lives in the main Strata package).
 
 Usage:
     python3 smack_to_core.py [options] [program.c ...]
@@ -31,7 +31,6 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 STRIP = HERE / "strip_smack_prelude.py"
-FIX = HERE / "fix_core_st.py"
 TRANSLATOR_PROJ = HERE.parent / "Source" / "BoogieToStrata.csproj"
 
 
@@ -70,7 +69,7 @@ def smack_to_bpl(cli: str, image: str, programs_dir: Path, stems: list[str]) -> 
 
 
 def translate(dotnet: str, bpl: Path, out_core: Path) -> None:
-    """strip -> BoogieToStrata --smack -> fix, producing out_core."""
+    """strip -> BoogieToStrata --smack, producing out_core."""
     stripped = bpl.with_name(bpl.stem + "_stripped.bpl")
     r = run([sys.executable, str(STRIP), str(bpl), str(stripped)])
     if r.returncode != 0:
@@ -80,12 +79,7 @@ def translate(dotnet: str, bpl: Path, out_core: Path) -> None:
              "--smack", str(stripped)])
     if r.returncode != 0:
         raise SystemExit(f"BoogieToStrata failed on {bpl.name}: {r.stderr.strip()}")
-    raw_core = bpl.with_name(bpl.stem + ".core.st")
-    raw_core.write_text(r.stdout)
-
-    r = run([sys.executable, str(FIX), str(raw_core), str(out_core)])
-    if r.returncode != 0:
-        raise SystemExit(f"fix_core_st failed on {bpl.name}: {r.stderr.strip()}")
+    out_core.write_text(r.stdout)
 
 
 def main() -> int:
@@ -132,7 +126,7 @@ def main() -> int:
             print(f"  SKIP {stem}: no .bpl (SMACK did not emit it)", file=sys.stderr)
             failed.append(stem)
             continue
-        out = pdir / f"{stem}_fixed.core.st"
+        out = pdir / f"{stem}.core.st"
         try:
             translate(args.dotnet, bpl, out)
             print(f"  OK {stem} -> {out.name}", file=sys.stderr)

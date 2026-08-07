@@ -424,6 +424,35 @@ public class BoogieToStrataIntegrationTests(ITestOutputHelper output) {
         Assert.DoesNotContain("forall T: int", standardOutput);
     }
 
+    /// <summary>
+    /// Independent functions (no call dependency) are emitted in alphabetical
+    /// order, giving a deterministic layout that matches what the SMACK
+    /// post-processing expected. Input declares `zebra` before `alpha`; with no
+    /// dependency between them, `alpha` must be emitted first. Dependency order
+    /// still wins over alphabetical (see InlineFunctionsEmittedInDependencyOrder).
+    /// </summary>
+    [Fact]
+    public void IndependentFunctionsEmittedAlphabetically() {
+        var filePath = Path.Combine(TestsDirectory, "FunctionAlphabeticalOrder.bpl");
+        Assert.True(File.Exists(filePath), $"Test file does not exist: {filePath}");
+
+        var (exitCode, standardOutput, errorOutput) = RunTranslation(filePath);
+
+        output.WriteLine($"Output:\n{standardOutput}");
+        if (!string.IsNullOrEmpty(errorOutput)) {
+            output.WriteLine($"Error output: {errorOutput}");
+        }
+
+        Assert.Equal(0, exitCode);
+
+        var alphaIdx = standardOutput.IndexOf("function alpha", StringComparison.Ordinal);
+        var zebraIdx = standardOutput.IndexOf("function zebra", StringComparison.Ordinal);
+        Assert.True(alphaIdx >= 0, "Expected `function alpha` in output");
+        Assert.True(zebraIdx >= 0, "Expected `function zebra` in output");
+        Assert.True(alphaIdx < zebraIdx,
+            $"Expected alpha (idx {alphaIdx}) before zebra (idx {zebraIdx}) by alphabetical tie-break.");
+    }
+
     [Fact]
     public void TestsDirectoryContainsBoogieFiles() {
         var bplFiles = Directory.GetFiles(TestsDirectory, "*.bpl", SearchOption.AllDirectories);

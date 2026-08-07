@@ -1,9 +1,9 @@
 # Pipeline examples
 
-Three small, self-contained examples that demonstrate the pre/post-processing
-stages of the SMACK → BoogieToStrata pipeline. Each starts from a hand-written
-`.bpl` (shaped like SMACK output) so the examples run without SMACK or a
-container — only the .NET 8 SDK is needed for the translator.
+Three small, self-contained examples that demonstrate the SMACK →
+BoogieToStrata pipeline. Each starts from a hand-written `.bpl` (shaped like
+SMACK output) so the examples run without SMACK or a container — only the .NET 8
+SDK is needed for the translator.
 
 For each `<name>` the committed files are:
 
@@ -11,8 +11,7 @@ For each `<name>` the committed files are:
 |---|---|
 | `<name>.bpl` | input (SMACK-shaped Boogie) |
 | `<name>.stripped.bpl` | after `strip_smack_prelude.py` |
-| `<name>.core.st` | after `BoogieToStrata --smack` then `fix_core_st.py` |
-| `<name>.raw.core.st` | translator output *before* `fix_core_st.py` (only where the fix changes it) |
+| `<name>.core.st` | after `BoogieToStrata --smack` |
 
 ## The three examples
 
@@ -42,17 +41,20 @@ ingest. Stripping turns it into a bodyless declaration while `main` keeps its bo
 The `.core.st` shows it as an uninterpreted `procedure __SMACK_and32(...)` with no
 implementation.
 
-### `func_reorder` — `fix_core_st.py` topologically sorts functions
+### `func_reorder` — BoogieToStrata emits functions in dependency order
 
-`caller` references `callee` but is declared first. The translator emits them in
-source order (`.raw.core.st`), producing a forward reference; `fix_core_st.py`
-reorders so each definition precedes its uses (`.core.st`):
+`caller` references `callee` but is declared first. The translator topologically
+sorts the function section so each definition precedes its uses (`.core.st`),
+rather than emitting them in source order:
 
 ```
-  # .raw.core.st          # .core.st
+  # source order          # .core.st
   function caller(...)     function callee(...)
   function callee(...)     function caller(...)
 ```
+
+(Independent functions with no dependency between them are ordered
+alphabetically, so the layout is deterministic.)
 
 ## Regenerating / checking
 

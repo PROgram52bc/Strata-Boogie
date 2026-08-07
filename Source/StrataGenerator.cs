@@ -312,12 +312,13 @@ public class StrataGenerator : ReadOnlyVisitor {
     /// every function its body calls (callee before caller), removing forward
     /// references from the emitted Core. Only inline bodies carry
     /// inter-function references — bodyless declarations have no dependencies.
-    /// Ties (and any dependency cycles) preserve the input order, which is the
-    /// declaration order the rest of the emitter uses.
+    /// Among functions whose dependencies are already emitted, the
+    /// alphabetically-smallest name is chosen, giving a deterministic layout
+    /// (matching the order the SMACK post-processing expected). A dependency
+    /// cycle falls back to emitting the remainder alphabetically.
     /// </summary>
     private static List<Function> ToposortFunctions(List<Function> functions) {
-        var index = new Dictionary<Function, int>();
-        for (var i = 0; i < functions.Count; i++) index[functions[i]] = i;
+        var known = new HashSet<Function>(functions);
 
         // deps[f] = the functions in this set that f's body calls.
         var deps = new Dictionary<Function, HashSet<Function>>();
@@ -327,33 +328,26 @@ public class StrataGenerator : ReadOnlyVisitor {
                 var collector = new FunctionCallCollector();
                 collector.VisitExpr(f.Body);
                 foreach (var callee in collector.CalledFunctions) {
-                    if (callee != f && index.ContainsKey(callee)) callees.Add(callee);
+                    if (callee != f && known.Contains(callee)) callees.Add(callee);
                 }
             }
             deps[f] = callees;
         }
 
-        var remaining = new List<Function>(functions);
+        // Kahn's algorithm, breaking ties by name so the layout is deterministic.
+        var remaining = functions.OrderBy(f => f.Name, StringComparer.Ordinal).ToList();
         var result = new List<Function>(functions.Count);
         var emitted = new HashSet<Function>();
-        // Kahn's algorithm, scanning in input order so ties stay stable.
         while (remaining.Count > 0) {
-            var progressed = false;
-            for (var i = 0; i < remaining.Count; i++) {
-                var f = remaining[i];
-                if (deps[f].All(emitted.Contains)) {
-                    result.Add(f);
-                    emitted.Add(f);
-                    remaining.RemoveAt(i);
-                    progressed = true;
-                    break;
-                }
-            }
-            if (!progressed) {
-                // Dependency cycle: emit the rest in input order and stop.
+            var next = remaining.FirstOrDefault(f => deps[f].All(emitted.Contains));
+            if (next is null) {
+                // Dependency cycle: emit the remainder (already name-sorted).
                 result.AddRange(remaining);
                 break;
             }
+            result.Add(next);
+            emitted.Add(next);
+            remaining.Remove(next);
         }
         return result;
     }

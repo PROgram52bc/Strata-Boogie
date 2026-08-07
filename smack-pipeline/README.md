@@ -2,31 +2,30 @@
 
 Utilities for turning C sources into Strata Core (`.core.st`) inputs by way of
 [SMACK](https://smackers.github.io/) and the BoogieToStrata translator in this
-repository. These are the pre/post-processing steps that bracket the translator's
-`--smack` mode; they exist so SMACK-generated benchmarks are reproducible from
+repository. This is the pre-processing step that feeds the translator's
+`--smack` mode; it exists so SMACK-generated benchmarks are reproducible from
 their C sources.
 
 ```
 .c  ──SMACK──▶  .bpl  ──strip_smack_prelude──▶  _stripped.bpl
-    ──BoogieToStrata --smack──▶  .core.st  ──fix_core_st──▶  _fixed.core.st
+    ──BoogieToStrata --smack──▶  .core.st
 ```
 
-The `_fixed.core.st` output is ready for `strata verify`. Running the verifier
-itself is out of scope here — it lives in the main Strata package.
+The `.core.st` output is ready for `strata verify`. Running the verifier itself
+is out of scope here — it lives in the main Strata package.
 
 ## Contents
 
 | File | Role |
 |---|---|
 | `Dockerfile` | Builds a container image with SMACK installed. |
-| `smack_to_core.py` | End-to-end driver: `.c` → `.bpl` (SMACK) → `.core.st` (translate) → `_fixed.core.st`. |
+| `smack_to_core.py` | End-to-end driver: `.c` → `.bpl` (SMACK) → `.core.st` (translate). |
 | `strip_smack_prelude.py` | Removes SMACK prelude procedure bodies and inlines `__VERIFIER_assume`. |
-| `fix_core_st.py` | Post-processes translator output: sorts function definitions, resolves parameter/type name shadowing. |
 
 The C sources are not included here; point the driver at your own `.c` inputs
 (see *Usage*).
 
-## Why the pre/post steps are needed
+## Why the pre step is needed
 
 - **`strip_smack_prelude.py`.** SMACK emits ~14 prelude procedures (`__SMACK_and32`,
   `__SMACK_or64`, …) whose bodies use unstructured multi-target gotos that the
@@ -35,9 +34,10 @@ The C sources are not included here; point the driver at your own `.c` inputs
   `call __VERIFIER_assume(e)` to `assume (e != $0)` inline: a body-less
   `__VERIFIER_assume` is analysed as a no-op under body-evaluating call policies, so
   inlining preserves the path-pruning the assume was meant to express.
-- **`fix_core_st.py`.** The translator emits functions in source order and may name a
-  parameter identically to a type. This step topologically sorts function definitions
-  to remove forward references and renames shadowing parameters (`p_<name>`).
+
+Post-processing of the translator output is no longer needed: BoogieToStrata now
+emits functions in dependency order (callee before caller, ties alphabetical) and
+renames parameters that would shadow a type name (`p_<name>`) itself.
 
 ## Prerequisites
 
@@ -95,15 +95,12 @@ python3 strip_smack_prelude.py programs/foo.bpl programs/foo_stripped.bpl
 
 # 3. translate (--smack)
 dotnet run --project ../Source -- --smack programs/foo_stripped.bpl > programs/foo.core.st
-
-# 4. fix
-python3 fix_core_st.py programs/foo.core.st programs/foo_fixed.core.st
 ```
 
 ## Generated artifacts
 
-All intermediates (`.bpl`, `_stripped.bpl`, `.core.st`, `_fixed.core.st`, and the
-LLVM/SMACK by-products) are generated and git-ignored (see `.gitignore`). Only the
+All intermediates (`.bpl`, `_stripped.bpl`, `.core.st`, and the LLVM/SMACK
+by-products) are generated and git-ignored (see `.gitignore`). Only the
 utilities are tracked.
 
 ## License

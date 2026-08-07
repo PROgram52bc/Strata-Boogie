@@ -2,8 +2,8 @@
 """Regenerate each example through the pipeline and check it matches the committed output.
 
 For every <name>.bpl in this directory, runs strip_smack_prelude -> BoogieToStrata
---smack -> fix_core_st and compares the regenerated .stripped.bpl and .core.st
-against the committed expected files. Exits non-zero on any mismatch or failure.
+--smack and compares the regenerated .stripped.bpl and .core.st against the
+committed expected files. Exits non-zero on any mismatch or failure.
 
 Usage:
     python3 check_examples.py [--dotnet /path/to/dotnet]
@@ -21,7 +21,6 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 PIPE = HERE.parent
 STRIP = PIPE / "strip_smack_prelude.py"
-FIX = PIPE / "fix_core_st.py"
 PROJ = PIPE.parent / "Source" / "BoogieToStrata.csproj"
 
 
@@ -68,13 +67,8 @@ def main() -> int:
             if r.returncode != 0:
                 print(f"FAIL {name}: translate: {r.stderr.strip().splitlines()[-1] if r.stderr.strip() else 'rc!=0'}")
                 failures += 1; continue
-            raw = tmp / f"{name}.raw.core.st"
-            raw.write_text(r.stdout)
-
             got_core = tmp / f"{name}.core.st"
-            r = run([sys.executable, str(FIX), str(raw), str(got_core)])
-            if r.returncode != 0:
-                print(f"FAIL {name}: fix: {r.stderr.strip()}"); failures += 1; continue
+            got_core.write_text(r.stdout)
 
             exp_core = HERE / f"{name}.core.st"
             if exp_core.exists():
