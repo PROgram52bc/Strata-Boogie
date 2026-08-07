@@ -27,6 +27,24 @@ public class FieldTypeCollector : ReadOnlyVisitor {
     }
 }
 
+/// <summary>
+/// Collects the <see cref="Function"/>s directly referenced by an expression
+/// (via <c>FunctionCall</c> nodes). Used to order function definitions so a
+/// callee precedes its caller in the emitted Core.
+/// </summary>
+public class FunctionCallCollector : ReadOnlyVisitor {
+    private readonly HashSet<Function> _called = [];
+
+    public IEnumerable<Function> CalledFunctions => _called.AsEnumerable();
+
+    public override Expr VisitNAryExpr(NAryExpr node) {
+        if (node.Fun is FunctionCall fc && fc.Func is not null) {
+            _called.Add(fc.Func);
+        }
+        return base.VisitNAryExpr(node);
+    }
+}
+
 public class StrataGenerator : ReadOnlyVisitor {
     /// <summary>
     /// Synthetic label representing procedure exit. Used as a goto target for
@@ -64,6 +82,10 @@ public class StrataGenerator : ReadOnlyVisitor {
     //   3. Constants, Functions, Globals — registered last; in a
     //      proc-vs-const collision the constant is always renamed.
     private readonly Dictionary<Declaration, string> _renames = new();
+    // Sanitized names of program types (constructors + synonyms). A local
+    // binding (Formal / BoundVariable) whose name is in this set is emitted
+    // with a `p_` prefix so it does not shadow the type. See MaybeShadowRename.
+    private readonly HashSet<string> _shadowedTypeNames = new();
     // True when the input is SMACK-generated Boogie. Gates SMACK-specific
     // accommodations (synthetic `requires (p != 0)` on assert_.<type> procedures).
     // The companion `InferModifies = true` knob is set on the Boogie options
@@ -117,6 +139,20 @@ public class StrataGenerator : ReadOnlyVisitor {
             foreach (var g in p.GlobalVariables)
                 ClaimOrRename(g, g.Name, "__var_", claimed, generator._renames);
 
+            // A local binding (function parameter, quantifier variable) whose
+            // emitted name equals a type name would shadow that type. Record the
+            // colliding type names; `NameOf` prefixes such a bound name with
+            // `p_` at every binding and reference site (see MaybeShadowRename),
+            // so the signature and the definition axiom Boogie lifts the body
+            // into — whose forall binder and references are distinct bound
+            // variables sharing the parameter's name — stay consistent. The type
+            // declaration itself is emitted through a different path and is not
+            // renamed.
+            foreach (var tcd in p.TopLevelDeclarations.OfType<TypeCtorDecl>())
+                generator._shadowedTypeNames.Add(SanitizeNameForStrata(tcd.Name));
+            foreach (var tsd in liveDeclarations.OfType<TypeSynonymDecl>())
+                generator._shadowedTypeNames.Add(SanitizeNameForStrata(tsd.Name));
+
             var typeConstructors = p.TopLevelDeclarations.OfType<TypeCtorDecl>().ToList();
             if (typeConstructors.Count != 0) {
                 generator.WriteLine("// Type constructors");
@@ -147,7 +183,7 @@ public class StrataGenerator : ReadOnlyVisitor {
             var functions = liveDeclarations.OfType<Function>().ToList();
             if (functions.Count != 0) {
                 generator.WriteLine("// Functions");
-                functions.ForEach(f => generator.VisitFunction(f));
+                ToposortFunctions(functions).ForEach(f => generator.VisitFunction(f));
                 generator.WriteLine();
             }
 
@@ -271,6 +307,57 @@ public class StrataGenerator : ReadOnlyVisitor {
         renames[decl] = candidate;
     }
 
+    /// <summary>
+    /// Order <paramref name="functions"/> so that a function is emitted after
+    /// every function its body calls (callee before caller), removing forward
+    /// references from the emitted Core. Only inline bodies carry
+    /// inter-function references — bodyless declarations have no dependencies.
+    /// Ties (and any dependency cycles) preserve the input order, which is the
+    /// declaration order the rest of the emitter uses.
+    /// </summary>
+    private static List<Function> ToposortFunctions(List<Function> functions) {
+        var index = new Dictionary<Function, int>();
+        for (var i = 0; i < functions.Count; i++) index[functions[i]] = i;
+
+        // deps[f] = the functions in this set that f's body calls.
+        var deps = new Dictionary<Function, HashSet<Function>>();
+        foreach (var f in functions) {
+            var callees = new HashSet<Function>();
+            if (f.Body is not null) {
+                var collector = new FunctionCallCollector();
+                collector.VisitExpr(f.Body);
+                foreach (var callee in collector.CalledFunctions) {
+                    if (callee != f && index.ContainsKey(callee)) callees.Add(callee);
+                }
+            }
+            deps[f] = callees;
+        }
+
+        var remaining = new List<Function>(functions);
+        var result = new List<Function>(functions.Count);
+        var emitted = new HashSet<Function>();
+        // Kahn's algorithm, scanning in input order so ties stay stable.
+        while (remaining.Count > 0) {
+            var progressed = false;
+            for (var i = 0; i < remaining.Count; i++) {
+                var f = remaining[i];
+                if (deps[f].All(emitted.Contains)) {
+                    result.Add(f);
+                    emitted.Add(f);
+                    remaining.RemoveAt(i);
+                    progressed = true;
+                    break;
+                }
+            }
+            if (!progressed) {
+                // Dependency cycle: emit the rest in input order and stop.
+                result.AddRange(remaining);
+                break;
+            }
+        }
+        return result;
+    }
+
     private void AddUniqueConst(Type t, string name) {
         if (!_uniqueConstants.TryGetValue(t, out var value)) {
             value = new HashSet<string>();
@@ -368,7 +455,21 @@ public class StrataGenerator : ReadOnlyVisitor {
     private string NameOf(Declaration decl, string originalName) {
         if (_renames.TryGetValue(decl, out var renamed))
             return renamed;
+        // Local bindings (function/procedure formals, quantifier bound vars)
+        // that shadow a type name are prefixed so the emitted name is distinct
+        // from the type. Top-level declarations (functions, procedures, globals,
+        // the type itself) are never rewritten here.
+        if (decl is Formal or BoundVariable)
+            return MaybeShadowRename(SanitizeNameForStrata(originalName));
         return SanitizeNameForStrata(originalName);
+    }
+
+    /// <summary>
+    /// Prefix <paramref name="sanitizedName"/> with `p_` when it collides with a
+    /// program type name, so a bound variable does not shadow the type.
+    /// </summary>
+    private string MaybeShadowRename(string sanitizedName) {
+        return _shadowedTypeNames.Contains(sanitizedName) ? $"p_{sanitizedName}" : sanitizedName;
     }
 
     private void WriteLine(string text) {
@@ -852,7 +953,7 @@ public class StrataGenerator : ReadOnlyVisitor {
                 WriteText(", ");
             }
 
-            WriteText(Name(variables[i].Name));
+            WriteText(NameOf(variables[i], variables[i].Name));
             WriteText(": ");
             VisitType(variables[i].TypedIdent.Type);
         }

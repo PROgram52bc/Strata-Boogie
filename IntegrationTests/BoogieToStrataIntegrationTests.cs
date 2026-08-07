@@ -362,6 +362,68 @@ public class BoogieToStrataIntegrationTests(ITestOutputHelper output) {
         Assert.Equal(1, result);
     }
 
+    /// <summary>
+    /// Regression: inline function bodies must be emitted in dependency order,
+    /// so a callee is defined before any caller that references it. The input
+    /// declares `caller` (whose inline body calls `callee`) before `callee`; the
+    /// emitted Core must topologically sort the function section so `callee`
+    /// precedes `caller` — no forward reference. This is the fix that made
+    /// fix_core_st.py's toposort pass unnecessary.
+    /// </summary>
+    [Fact]
+    public void InlineFunctionsEmittedInDependencyOrder() {
+        var filePath = Path.Combine(TestsDirectory, "FunctionForwardReference.bpl");
+        Assert.True(File.Exists(filePath), $"Test file does not exist: {filePath}");
+
+        var (exitCode, standardOutput, errorOutput) = RunTranslation(filePath);
+
+        output.WriteLine($"Output:\n{standardOutput}");
+        if (!string.IsNullOrEmpty(errorOutput)) {
+            output.WriteLine($"Error output: {errorOutput}");
+        }
+
+        Assert.Equal(0, exitCode);
+
+        var calleeIdx = standardOutput.IndexOf("function callee", StringComparison.Ordinal);
+        var callerIdx = standardOutput.IndexOf("function caller", StringComparison.Ordinal);
+        Assert.True(calleeIdx >= 0, "Expected `function callee` in output");
+        Assert.True(callerIdx >= 0, "Expected `function caller` in output");
+        Assert.True(calleeIdx < callerIdx,
+            $"Expected callee (idx {calleeIdx}) to be emitted before caller (idx {callerIdx}) " +
+            "so the referenced function precedes its use.");
+    }
+
+    /// <summary>
+    /// Regression: a function parameter whose name equals a type name must be
+    /// renamed so it does not shadow the type. Input has type `T` and a function
+    /// parameter `T`; the emitted signature must bind `p_T`, and — because the
+    /// rename happens at the parameter binding — the lifted definition axiom must
+    /// also quantify over `p_T`, never a bare `T` shadowing the type. This is the
+    /// fix that made fix_core_st.py's shadow-rename pass unnecessary.
+    /// </summary>
+    [Fact]
+    public void FunctionParamShadowingTypeIsRenamed() {
+        var filePath = Path.Combine(TestsDirectory, "ParamTypeNameShadow.bpl");
+        Assert.True(File.Exists(filePath), $"Test file does not exist: {filePath}");
+
+        var (exitCode, standardOutput, errorOutput) = RunTranslation(filePath);
+
+        output.WriteLine($"Output:\n{standardOutput}");
+        if (!string.IsNullOrEmpty(errorOutput)) {
+            output.WriteLine($"Error output: {errorOutput}");
+        }
+
+        Assert.Equal(0, exitCode);
+
+        // The parameter is renamed in the signature.
+        Assert.Contains("function f(p_T : int)", standardOutput);
+        // The type declaration itself is untouched.
+        Assert.Contains("type T;", standardOutput);
+        // The rename reaches the lifted axiom: it quantifies over p_T, not T.
+        Assert.Contains("forall p_T: int", standardOutput);
+        Assert.DoesNotContain("forall T: int", standardOutput);
+    }
+
     [Fact]
     public void TestsDirectoryContainsBoogieFiles() {
         var bplFiles = Directory.GetFiles(TestsDirectory, "*.bpl", SearchOption.AllDirectories);
