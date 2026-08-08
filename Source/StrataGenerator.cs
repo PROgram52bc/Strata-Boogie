@@ -1890,7 +1890,7 @@ public class StrataGenerator : ReadOnlyVisitor {
         return false;
     }
 
-    private void WriteProcedureHeader(Procedure proc) {
+    private void WriteProcedureHeader(Procedure proc, bool hasImplementation = false) {
         // Modifies globals become inout params; read-only globals become input params.
         var modifiesNames = new HashSet<string>(proc.Modifies.Select(m => m.Name));
         var modifiesGlobals = _globalVariables.Where(g => modifiesNames.Contains(g.Name)).ToList();
@@ -1907,8 +1907,26 @@ public class StrataGenerator : ReadOnlyVisitor {
         WriteFormals(proc.OutParams, ref needComma, "out ");
         WriteLine(")");
 
+        // A `free ensures` on a procedure that also has an implementation is a
+        // Boogie summary meant to be used *in place of* the body when the callee
+        // is abstracted. SMACK's equivalence harness emits such a summary pinning
+        // the reffile output to the otherfile uninterpreted function (e.g.
+        // `free ensures $return == _uf_otherfile...($args)`) alongside an
+        // `{:inline 1}` implementation. Boogie honors `{:inline 1}` and inlines
+        // the real (differing) body, ignoring the summary; Strata's `--call-policy
+        // bodyOrContract` instead assumes the `free ensures`, so both sides of an
+        // equivalence miter collapse to the same otherfile UF and the check passes
+        // vacuously — falsely certifying inequivalent (`.Neq`) programs equal.
+        // The `{:inline 1}` attribute is not carried into Core, so restore Boogie's
+        // semantics by dropping the assume-only summary for body-bearing procedures:
+        // Strata then verifies against the emitted body. Checked (non-free) ensures
+        // — the real obligations, e.g. the miter equivalence conjunction — are kept.
+        var emittedEnsures = hasImplementation
+            ? proc.Ensures.Where(e => !e.Free).ToList()
+            : proc.Ensures;
+
         // Spec: no modifies clause; only requires and ensures.
-        if (proc.Requires.Count != 0 || proc.Ensures.Count != 0) {
+        if (proc.Requires.Count != 0 || emittedEnsures.Count != 0) {
             WriteLine("spec {");
             IncIndent();
 
@@ -1925,7 +1943,7 @@ public class StrataGenerator : ReadOnlyVisitor {
                 WriteLine(";");
             }
 
-            foreach (var ens in proc.Ensures) {
+            foreach (var ens in emittedEnsures) {
                 Indent();
                 if (UnsupportedQuantifier(ens.Condition)) {
                     WriteText("// ");
@@ -2011,7 +2029,10 @@ public class StrataGenerator : ReadOnlyVisitor {
     }
 
     public override Implementation VisitImplementation(Implementation node) {
-        WriteProcedureHeader(node.Proc);
+        // hasImplementation: this procedure has a body, so drop assume-only
+        // `free ensures` summaries that would otherwise shadow it under
+        // bodyOrContract (see WriteProcedureHeader).
+        WriteProcedureHeader(node.Proc, hasImplementation: true);
         WriteLine();
         WriteLine("{");
         IncIndent();
