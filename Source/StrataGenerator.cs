@@ -595,7 +595,7 @@ public class StrataGenerator : ReadOnlyVisitor {
                 WriteText(Name(typeVariable.Name));
                 break;
             case BvType bvType:
-                WriteText($"bv{bvType.Bits}");
+                WriteText($"bv W{bvType.Bits}");
                 break;
             case BasicType basicType:
                 if (basicType.IsBool) {
@@ -607,7 +607,7 @@ public class StrataGenerator : ReadOnlyVisitor {
                 } else if (basicType.IsReal) {
                     WriteText("real");
                 } else if (basicType.IsBv) {
-                    WriteText($"bv{basicType.BvBits}");
+                    WriteText($"bv W{basicType.BvBits}");
                 } else {
                     throw new StrataConversionException(node.tok, $"Unknown basic type: {node.GetType()}");
                 }
@@ -744,12 +744,39 @@ public class StrataGenerator : ReadOnlyVisitor {
                                 WriteText(")");
                                 break;
                             default:
-                                var opSymbol = GetBinaryOperatorSymbol(node.tok, binaryOp);
-                                WriteText("(");
-                                VisitExpr(args[0]);
-                                WriteText($" {opSymbol} ");
-                                VisitExpr(args[1]);
-                                WriteText(")");
+                                // The Core grammar has no infix real arithmetic;
+                                // real +/-/* are width-free prefix calls
+                                // `real.add/sub/mul(a, b)`. (Integer/bitvector
+                                // arithmetic reaches Strata via SMACK's bv builtin
+                                // functions, handled in MaybeEmitBuiltinBody, so
+                                // only the real case needs prefixing here.)
+                                var realPrefixOp = args[0].Type is not null && args[0].Type.IsReal
+                                    ? binaryOp.Op switch {
+                                        BinaryOperator.Opcode.Add => "real.add",
+                                        BinaryOperator.Opcode.Sub => "real.sub",
+                                        BinaryOperator.Opcode.Mul => "real.mul",
+                                        BinaryOperator.Opcode.RealDiv => "real.div",
+                                        BinaryOperator.Opcode.Lt => "real.lt",
+                                        BinaryOperator.Opcode.Le => "real.le",
+                                        BinaryOperator.Opcode.Gt => "real.gt",
+                                        BinaryOperator.Opcode.Ge => "real.ge",
+                                        _ => null
+                                    }
+                                    : null;
+                                if (realPrefixOp is not null) {
+                                    WriteText($"{realPrefixOp}(");
+                                    VisitExpr(args[0]);
+                                    WriteText(", ");
+                                    VisitExpr(args[1]);
+                                    WriteText(")");
+                                } else {
+                                    var opSymbol = GetBinaryOperatorSymbol(node.tok, binaryOp);
+                                    WriteText("(");
+                                    VisitExpr(args[0]);
+                                    WriteText($" {opSymbol} ");
+                                    VisitExpr(args[1]);
+                                    WriteText(")");
+                                }
                                 break;
                         }
 
@@ -1768,18 +1795,6 @@ public class StrataGenerator : ReadOnlyVisitor {
         return node;
     }
 
-    private void EmitUnopBody(Function function, string op) {
-        var sanitizedArgs =
-            function.InParams.Select(i => Name(i.Name)).ToArray();
-        WriteLine($" {{ {op} {sanitizedArgs[0]} }}");
-    }
-
-    private void EmitBinopBody(Function function, string op) {
-        var sanitizedArgs =
-            function.InParams.Select(i => Name(i.Name)).ToArray();
-        WriteLine($" {{ {sanitizedArgs[0]} {op} {sanitizedArgs[1]} }}");
-    }
-
     private void EmitCallBody(Function function, string fn) {
         var sanitizedArgs =
             function.InParams.Select(i => Name(i.Name));
@@ -1788,34 +1803,46 @@ public class StrataGenerator : ReadOnlyVisitor {
     }
 
     // If the function has an SMT builtin attribute, emit a body
-    // that calls that builtin.
+    // that calls that builtin. The Core grammar has no infix bitvector
+    // operators; every bv operation is a width-specialized prefix call
+    // `bv{W}.{op}(args)` (e.g. `bv32.add(a, b)`), where the width is taken
+    // from the (bitvector) operand type.
     private void MaybeEmitBuiltinBody(Function function) {
         var builtinAttr = QKeyValue.FindStringAttribute(function.Attributes, "bvbuiltin");
         var inParamTypes = function.InParams.Select(i => i.TypedIdent.Type).ToArray();
+        // Width prefix for a bv builtin, from the first bitvector operand.
+        string BvPrefix() {
+            var bvArg = inParamTypes.FirstOrDefault(t => t.IsBv);
+            if (bvArg is null) {
+                throw new StrataConversionException(function.tok,
+                    $"Function {function.Name} binds to a bitvector SMT builtin but has no bitvector operand.");
+            }
+            return $"bv{bvArg.BvBits}";
+        }
         switch (builtinAttr) {
-            case "bvneg": EmitUnopBody(function, "-"); break;
-            case "bvadd": EmitBinopBody(function, "+"); break;
-            case "bvsub": EmitBinopBody(function, "-"); break;
-            case "bvmul": EmitBinopBody(function, "*"); break;
-            case "bvsdiv": EmitBinopBody(function, "sdiv"); break;
-            case "bvsrem": EmitBinopBody(function, "smod"); break;
-            case "bvudiv": EmitBinopBody(function, "div"); break;
-            case "bvurem": EmitBinopBody(function, "mod"); break;
-            case "bvand": EmitBinopBody(function, "&"); break;
-            case "bvor": EmitBinopBody(function, "|"); break;
-            case "bvxor": EmitBinopBody(function, "^"); break;
-            case "bvnot": EmitUnopBody(function, "~"); break;
-            case "bvshl": EmitBinopBody(function, "<<"); break;
-            case "bvlshr": EmitBinopBody(function, ">>"); break;
-            case "bvashr": EmitBinopBody(function, ">>s"); break;
-            case "bvslt": EmitBinopBody(function, "<s"); break;
-            case "bvsle": EmitBinopBody(function, "<=s"); break;
-            case "bvsgt": EmitBinopBody(function, ">s"); break;
-            case "bvsge": EmitBinopBody(function, ">=s"); break;
-            case "bvult": EmitBinopBody(function, "<"); break;
-            case "bvule": EmitBinopBody(function, "<="); break;
-            case "bvugt": EmitBinopBody(function, ">"); break;
-            case "bvuge": EmitBinopBody(function, ">="); break;
+            case "bvneg": EmitCallBody(function, $"{BvPrefix()}.neg"); break;
+            case "bvadd": EmitCallBody(function, $"{BvPrefix()}.add"); break;
+            case "bvsub": EmitCallBody(function, $"{BvPrefix()}.sub"); break;
+            case "bvmul": EmitCallBody(function, $"{BvPrefix()}.mul"); break;
+            case "bvsdiv": EmitCallBody(function, $"{BvPrefix()}.sDiv"); break;
+            case "bvsrem": EmitCallBody(function, $"{BvPrefix()}.sMod"); break;
+            case "bvudiv": EmitCallBody(function, $"{BvPrefix()}.uDiv"); break;
+            case "bvurem": EmitCallBody(function, $"{BvPrefix()}.uMod"); break;
+            case "bvand": EmitCallBody(function, $"{BvPrefix()}.and"); break;
+            case "bvor": EmitCallBody(function, $"{BvPrefix()}.or"); break;
+            case "bvxor": EmitCallBody(function, $"{BvPrefix()}.xor"); break;
+            case "bvnot": EmitCallBody(function, $"{BvPrefix()}.not"); break;
+            case "bvshl": EmitCallBody(function, $"{BvPrefix()}.shl"); break;
+            case "bvlshr": EmitCallBody(function, $"{BvPrefix()}.uShr"); break;
+            case "bvashr": EmitCallBody(function, $"{BvPrefix()}.sShr"); break;
+            case "bvslt": EmitCallBody(function, $"{BvPrefix()}.sLt"); break;
+            case "bvsle": EmitCallBody(function, $"{BvPrefix()}.sLe"); break;
+            case "bvsgt": EmitCallBody(function, $"{BvPrefix()}.sGt"); break;
+            case "bvsge": EmitCallBody(function, $"{BvPrefix()}.sGe"); break;
+            case "bvult": EmitCallBody(function, $"{BvPrefix()}.uLt"); break;
+            case "bvule": EmitCallBody(function, $"{BvPrefix()}.uLe"); break;
+            case "bvugt": EmitCallBody(function, $"{BvPrefix()}.uGt"); break;
+            case "bvuge": EmitCallBody(function, $"{BvPrefix()}.uGe"); break;
             case "concat": {
                 if (inParamTypes.Length != 2) {
                     throw new StrataConversionException(function.tok,
@@ -1890,6 +1917,29 @@ public class StrataGenerator : ReadOnlyVisitor {
         return false;
     }
 
+    // True iff `cond` is the vacuity-inducing SMACK self-summary of a body-bearing
+    // procedure: a top-level `<lhs> == _uf_...(...)` where `<lhs>` names one of the
+    // procedure's own outputs / inout (modifies) vars and the RHS is a call to an
+    // uninterpreted function whose name starts with the SMACK UF prefix `_uf_`.
+    // These are exactly the clauses that pin an output to a per-file UF and, under
+    // `--call-policy bodyOrContract`, shadow the real body (collapsing an
+    // equivalence miter to a vacuous PASS). Any other free ensures — frame
+    // conditions, `old`-snapshot equalities, quantified invariants — is NOT matched,
+    // so vars those clauses bind stay in scope.
+    private static bool IsSelfReferentialUFSummary(Expr cond, HashSet<string> ownOutputVars) {
+        if (cond is not NAryExpr { Fun: BinaryOperator { Op: BinaryOperator.Opcode.Eq } } eq
+            || eq.Args.Count != 2) {
+            return false;
+        }
+
+        if (eq.Args[0] is not IdentifierExpr lhs || !ownOutputVars.Contains(lhs.Name)) {
+            return false;
+        }
+
+        return eq.Args[1] is NAryExpr { Fun: FunctionCall rhsCall }
+            && rhsCall.FunctionName.StartsWith("_uf_");
+    }
+
     private void WriteProcedureHeader(Procedure proc, bool hasImplementation = false) {
         // Modifies globals become inout params; read-only globals become input params.
         var modifiesNames = new HashSet<string>(proc.Modifies.Select(m => m.Name));
@@ -1921,8 +1971,24 @@ public class StrataGenerator : ReadOnlyVisitor {
         // semantics by dropping the assume-only summary for body-bearing procedures:
         // Strata then verifies against the emitted body. Checked (non-free) ensures
         // — the real obligations, e.g. the miter equivalence conjunction — are kept.
+        //
+        // Blanket-dropping *all* free ensures orphans free-variables that survive
+        // in the retained clauses: SMACK also emits free-ensures conjuncts that are
+        // NOT self-referential UF summaries (frame conditions over static globals,
+        // `old(...)` snapshot equalities, quantified heap-invariants). Those bind
+        // vars — e.g. a static-global heap `otherfile.<class>$<field>` — that other
+        // retained clauses / `old` snapshots reference; dropping them leaves those
+        // vars unbound and Core type-checking fails with "Cannot find this fvar in
+        // the context". Partition instead: drop a free-ensures conjunct only when it
+        // is precisely the vacuity-inducing self-summary — a top-level equality whose
+        // LHS is one of this procedure's own outputs / inout (modifies) vars and
+        // whose RHS is a call to an uninterpreted `_uf_...` function (the shape that
+        // shadows the body). Every other free ensures is kept, so vars needed
+        // elsewhere stay bound.
+        var ownOutputVars = new HashSet<string>(
+            proc.OutParams.Select(p => p.Name).Concat(proc.Modifies.Select(m => m.Name)));
         var emittedEnsures = hasImplementation
-            ? proc.Ensures.Where(e => !e.Free).ToList()
+            ? proc.Ensures.Where(e => !(e.Free && IsSelfReferentialUFSummary(e.Condition, ownOutputVars))).ToList()
             : proc.Ensures;
 
         // Spec: no modifies clause; only requires and ensures.
