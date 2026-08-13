@@ -744,12 +744,13 @@ public class StrataGenerator : ReadOnlyVisitor {
                                 WriteText(")");
                                 break;
                             default:
-                                // The Core grammar has no infix real arithmetic;
-                                // real +/-/* are width-free prefix calls
-                                // `real.add/sub/mul(a, b)`. (Integer/bitvector
-                                // arithmetic reaches Strata via SMACK's bv builtin
-                                // functions, handled in MaybeEmitBuiltinBody, so
-                                // only the real case needs prefixing here.)
+                                // The Core grammar has no infix real arithmetic or
+                                // integer comparison; real +/-/* are width-free
+                                // prefix calls `real.add/sub/mul(a, b)`, and integer
+                                // comparisons are prefix `int.lt/le/gt/ge(a, b)`.
+                                // (Integer/bitvector arithmetic reaches Strata via
+                                // SMACK's bv builtin functions, handled in
+                                // MaybeEmitBuiltinBody.)
                                 var realPrefixOp = args[0].Type is not null && args[0].Type.IsReal
                                     ? binaryOp.Op switch {
                                         BinaryOperator.Opcode.Add => "real.add",
@@ -763,8 +764,21 @@ public class StrataGenerator : ReadOnlyVisitor {
                                         _ => null
                                     }
                                     : null;
-                                if (realPrefixOp is not null) {
-                                    WriteText($"{realPrefixOp}(");
+                                // Integer comparison: the operands are `int` (the
+                                // real case is handled above; bitvector comparison
+                                // arrives as an SMACK builtin, not a BinaryOperator).
+                                var intPrefixOp = args[0].Type is not null && args[0].Type.IsInt
+                                    ? binaryOp.Op switch {
+                                        BinaryOperator.Opcode.Lt => "int.lt",
+                                        BinaryOperator.Opcode.Le => "int.le",
+                                        BinaryOperator.Opcode.Gt => "int.gt",
+                                        BinaryOperator.Opcode.Ge => "int.ge",
+                                        _ => null
+                                    }
+                                    : null;
+                                var prefixOp = realPrefixOp ?? intPrefixOp;
+                                if (prefixOp is not null) {
+                                    WriteText($"{prefixOp}(");
                                     VisitExpr(args[0]);
                                     WriteText(", ");
                                     VisitExpr(args[1]);
