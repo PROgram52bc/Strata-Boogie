@@ -764,11 +764,19 @@ public class StrataGenerator : ReadOnlyVisitor {
                                         _ => null
                                     }
                                     : null;
-                                // Integer comparison: the operands are `int` (the
-                                // real case is handled above; bitvector comparison
-                                // arrives as an SMACK builtin, not a BinaryOperator).
+                                // Integer arithmetic and comparison: the Core
+                                // grammar has no infix integer operators either, so
+                                // emit prefix `int.*(a, b)`. Detected by operand type
+                                // (`int`); the real case is handled above, and
+                                // bitvector ops arrive as SMACK builtins, not as a
+                                // BinaryOperator.
                                 var intPrefixOp = args[0].Type is not null && args[0].Type.IsInt
                                     ? binaryOp.Op switch {
+                                        BinaryOperator.Opcode.Add => "int.add",
+                                        BinaryOperator.Opcode.Sub => "int.sub",
+                                        BinaryOperator.Opcode.Mul => "int.mul",
+                                        BinaryOperator.Opcode.Div => "int.div",
+                                        BinaryOperator.Opcode.Mod => "int.mod",
                                         BinaryOperator.Opcode.Lt => "int.lt",
                                         BinaryOperator.Opcode.Le => "int.le",
                                         BinaryOperator.Opcode.Gt => "int.gt",
