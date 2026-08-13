@@ -167,6 +167,7 @@ public class BoogieToStrataIntegrationTests(ITestOutputHelper output) {
             output.WriteLine($"Verifier stderr:\n{stderr}");
         }
         output.WriteLine($"Verifier exit code: {proc.ExitCode}");
+        output.WriteLine($"Verifier stdout (BEGIN)\n{stdout}\n(END verifier stdout)");
         var expectedExitCode = 0;
         if (expectString is null) {
             Assert.Contains("Skipping verification", stdout);
@@ -230,10 +231,10 @@ public class BoogieToStrataIntegrationTests(ITestOutputHelper output) {
         Assert.True(secondSpecEnd > secondSpecStart, "Second spec block missing closing brace");
         var secondSpec = standardOutput.Substring(secondSpecStart, secondSpecEnd - secondSpecStart);
 
-        // The user-written `requires (p.0 > -1)` (sanitized to `p_0 > -(1)`)
-        // and the synthetic `requires (p.0 != 0)` (sanitized to `p_0 != 0`)
-        // must both be present in this single spec block.
-        Assert.Contains("p_0 > -(1)", secondSpec);
+        // The user-written `requires (p.0 > -1)` (sanitized to
+        // `int.gt(p_0, int.neg(1))`) and the synthetic `requires (p.0 != 0)`
+        // (sanitized to `p_0 != 0`) must both be present in this single spec block.
+        Assert.Contains("int.gt(p_0, int.neg(1))", secondSpec);
         Assert.Contains("p_0 != 0", secondSpec);
     }
 
