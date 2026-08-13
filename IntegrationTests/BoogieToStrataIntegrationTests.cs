@@ -155,11 +155,18 @@ public class BoogieToStrataIntegrationTests(ITestOutputHelper output) {
         proc.StartInfo.RedirectStandardOutput = true;
         proc.StartInfo.RedirectStandardError = true;
         proc.Start();
+        // Read stdout/stderr BEFORE WaitForExit to avoid pipe-buffer deadlock
+        // (child can SIGPIPE if the OS pipe fills while parent is blocked in
+        // WaitForExit, producing empty output on large-stderr processes).
+        var stdout = proc.StandardOutput.ReadToEnd();
+        var stderr = proc.StandardError.ReadToEnd();
         proc.WaitForExit();
         File.Delete(strataFile);
         Directory.Delete(vcsDirectory, true);
-        var stdout = proc.StandardOutput.ReadToEnd();
-        var stderr = proc.StandardError.ReadToEnd();
+        if (!string.IsNullOrEmpty(stderr)) {
+            output.WriteLine($"Verifier stderr:\n{stderr}");
+        }
+        output.WriteLine($"Verifier exit code: {proc.ExitCode}");
         var expectedExitCode = 0;
         if (expectString is null) {
             Assert.Contains("Skipping verification", stdout);
