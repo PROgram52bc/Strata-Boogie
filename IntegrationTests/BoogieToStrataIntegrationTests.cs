@@ -453,6 +453,36 @@ public class BoogieToStrataIntegrationTests(ITestOutputHelper output) {
             $"Expected alpha (idx {alphaIdx}) before zebra (idx {zebraIdx}) by alphabetical tie-break.");
     }
 
+    /// <summary>
+    /// Regression: when dependency order and alphabetical order disagree,
+    /// dependency order wins. `alpha`'s inline body calls `zebra`, so `zebra`
+    /// must be emitted before `alpha` even though `alpha` < `zebra`
+    /// alphabetically. This discriminates dependency-ordered emission from a
+    /// plain alphabetical sort — the latter would wrongly emit `alpha` first.
+    /// </summary>
+    [Fact]
+    public void DependencyOrderBeatsAlphabetical() {
+        var filePath = Path.Combine(TestsDirectory, "DependencyOrderBeatsAlphabetical.bpl");
+        Assert.True(File.Exists(filePath), $"Test file does not exist: {filePath}");
+
+        var (exitCode, standardOutput, errorOutput) = RunTranslation(filePath);
+
+        output.WriteLine($"Output:\n{standardOutput}");
+        if (!string.IsNullOrEmpty(errorOutput)) {
+            output.WriteLine($"Error output: {errorOutput}");
+        }
+
+        Assert.Equal(0, exitCode);
+
+        var zebraIdx = standardOutput.IndexOf("function zebra", StringComparison.Ordinal);
+        var alphaIdx = standardOutput.IndexOf("function alpha", StringComparison.Ordinal);
+        Assert.True(zebraIdx >= 0, "Expected `function zebra` in output");
+        Assert.True(alphaIdx >= 0, "Expected `function alpha` in output");
+        Assert.True(zebraIdx < alphaIdx,
+            $"Expected zebra (idx {zebraIdx}) before alpha (idx {alphaIdx}): dependency " +
+            "order must beat the alphabetical tie-break when they disagree.");
+    }
+
     [Fact]
     public void TestsDirectoryContainsBoogieFiles() {
         var bplFiles = Directory.GetFiles(TestsDirectory, "*.bpl", SearchOption.AllDirectories);

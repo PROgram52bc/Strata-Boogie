@@ -65,8 +65,8 @@ does not yet reduce (e.g. a two-target `goto` whose arms are not obvious
 inverses raises `Unsupported: goto with two targets that aren't obvious
 inverses`). If translation of a freshly generated `.bpl` fails on such a goto,
 pin `SMACK_REF` to the release that produced your reference corpus and rebuild
-the image. Override at build time with `--build-arg`-style env, e.g.
-`SMACK_REF=<tag-or-commit>`.
+the image. Override at build time with `--build-arg`, e.g.
+`docker build --build-arg SMACK_REF=<tag-or-commit> .`.
 
 ## Usage
 

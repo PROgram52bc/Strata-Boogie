@@ -1,10 +1,9 @@
 // {:smack}
-// Demonstrates fix_core_st.py's function toposort (post-translation).
+// Demonstrates BoogieToStrata's dependency-ordered function emission.
 //
-// BoogieToStrata emits functions in source order. Here `caller` is declared
-// before the `callee` it references, producing a forward reference in the
-// emitted Core. fix_core_st.py topologically sorts the function section so each
-// definition precedes its uses.
+// Here `caller` is declared before the `callee` it references. BoogieToStrata
+// topologically sorts the emitted function section so each definition precedes
+// its uses, so the Core lists `callee` before `caller` — no forward reference.
 
 function caller(x: int): int { callee(x) + 1 }
 function callee(x: int): int { x * 2 }

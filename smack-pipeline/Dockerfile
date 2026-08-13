@@ -5,7 +5,9 @@ ENV SMACKDIR=/home/user/smack
 # Pin SMACK so the generated Boogie is reproducible. A floating clone drifts with
 # SMACK's frontend: newer releases emit control flow (e.g. two-target gotos that
 # are not obvious inverses) that the translator does not yet reduce.
-ENV SMACK_REF=v2.10.0
+# Overridable at build time with `--build-arg SMACK_REF=<tag-or-commit>`.
+ARG SMACK_REF=v2.10.0
+ENV SMACK_REF=${SMACK_REF}
 
 RUN apt-get update && \
     apt-get -y install software-properties-common wget sudo g++ git && \
