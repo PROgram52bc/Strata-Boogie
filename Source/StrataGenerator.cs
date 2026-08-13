@@ -805,10 +805,22 @@ public class StrataGenerator : ReadOnlyVisitor {
                         break;
                     }
                     case UnaryOperator unaryOp: {
-                        var opSymbol = GetUnaryOperatorSymbol(node.tok, unaryOp);
-                        WriteText($"{opSymbol}(");
-                        VisitExpr(args[0]);
-                        WriteText(")");
+                        // Integer/real negation is a prefix named operator in the
+                        // Core grammar (`int.neg(a)` / `real.neg(a)`), not infix `-`.
+                        // Boolean `!` stays as the grammar's prefix `!`.
+                        string? negPrefixOp = unaryOp.Op == UnaryOperator.Opcode.Neg
+                            ? (args[0].Type is not null && args[0].Type.IsReal ? "real.neg" : "int.neg")
+                            : null;
+                        if (negPrefixOp is not null) {
+                            WriteText($"{negPrefixOp}(");
+                            VisitExpr(args[0]);
+                            WriteText(")");
+                        } else {
+                            var opSymbol = GetUnaryOperatorSymbol(node.tok, unaryOp);
+                            WriteText($"{opSymbol}(");
+                            VisitExpr(args[0]);
+                            WriteText(")");
+                        }
                         break;
                     }
                     case MapSelect: {
