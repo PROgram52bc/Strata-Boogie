@@ -45,6 +45,46 @@ public class FunctionCallCollector : ReadOnlyVisitor {
     }
 }
 
+public class OldReferencedNameCollector : ReadOnlyVisitor {
+    private readonly HashSet<string> _names = [];
+    private int _oldDepth;
+
+    public IEnumerable<string> Names => _names.AsEnumerable();
+
+    public override Expr VisitOldExpr(OldExpr node) {
+        _oldDepth++;
+        var result = base.VisitOldExpr(node);
+        _oldDepth--;
+        return result;
+    }
+
+    public override Expr VisitIdentifierExpr(IdentifierExpr node) {
+        if (_oldDepth > 0) {
+            _names.Add(node.Name);
+        }
+        return base.VisitIdentifierExpr(node);
+    }
+}
+
+/// <summary>
+/// Collects the <see cref="Procedure"/>s directly called by an implementation
+/// (via <c>CallCmd</c> nodes). Used to close a procedure's inout-global set over
+/// the call graph: a call site threads a callee's inout globals positionally, so
+/// every transitive caller must also expose them as <c>inout</c>.
+/// </summary>
+public class CalledProcedureCollector : ReadOnlyVisitor {
+    private readonly HashSet<Procedure> _called = [];
+
+    public IEnumerable<Procedure> CalledProcedures => _called.AsEnumerable();
+
+    public override Cmd VisitCallCmd(CallCmd node) {
+        if (node.Proc is not null) {
+            _called.Add(node.Proc);
+        }
+        return base.VisitCallCmd(node);
+    }
+}
+
 public class StrataGenerator : ReadOnlyVisitor {
     /// <summary>
     /// Synthetic label representing procedure exit. Used as a goto target for
@@ -1184,7 +1224,9 @@ public class StrataGenerator : ReadOnlyVisitor {
 
     public override Cmd VisitCallCmd(CallCmd node) {
         var callee = node.Proc;
-        var modifiesNames = new HashSet<string>(callee.Modifies.Select(m => m.Name));
+        // Match the callee's parameter modes: inout globals (own modifies + old-ref,
+        // closed over the call graph), then read-only globals. See InoutGlobalNames.
+        var modifiesNames = InoutGlobalNames(callee);
 
         Indent("call ");
         WriteText($"{NameOf(callee, callee.Name)}(");
@@ -1974,9 +2016,76 @@ public class StrataGenerator : ReadOnlyVisitor {
             && rhsCall.FunctionName.StartsWith("_uf_");
     }
 
+    private HashSet<string> LocalInoutGlobalNames(Procedure proc) {
+        var names = new HashSet<string>(proc.Modifies.Select(m => m.Name));
+        var oldCollector = new OldReferencedNameCollector();
+        foreach (var req in proc.Requires) oldCollector.VisitExpr(req.Condition);
+        foreach (var ens in proc.Ensures) oldCollector.VisitExpr(ens.Condition);
+        names.UnionWith(oldCollector.Names);
+        return names;
+    }
+
+    // The inout-global set closed over the call graph. A call site threads the
+    // callee's inout globals positionally as `inout` arguments, so a caller must
+    // expose every global that any (transitive) callee treats as inout —
+    // otherwise the caller "modifies variables it is not allowed to" (passing a
+    // read-only param as `inout` counts as modifying it). Header and call site
+    // share this predicate so a caller's argument mode matches the callee's
+    // parameter mode. Keyed by Procedure object because two procedures with the
+    // same name (reffile/otherfile pairs) carry different specs.
+    private readonly Dictionary<Procedure, HashSet<string>> _inoutGlobalNamesCache = new();
+    private Dictionary<Procedure, HashSet<Procedure>>? _directCalleesCache;
+
+    private Dictionary<Procedure, HashSet<Procedure>> DirectCallees() {
+        if (_directCalleesCache is not null) {
+            return _directCalleesCache;
+        }
+        _directCalleesCache = new Dictionary<Procedure, HashSet<Procedure>>();
+        foreach (var impl in _program.Implementations) {
+            if (impl.Proc is null) continue;
+            var collector = new CalledProcedureCollector();
+            collector.Visit(impl);
+            if (!_directCalleesCache.TryGetValue(impl.Proc, out var set)) {
+                set = new HashSet<Procedure>();
+                _directCalleesCache[impl.Proc] = set;
+            }
+            set.UnionWith(collector.CalledProcedures);
+        }
+        return _directCalleesCache;
+    }
+
+    private HashSet<string> InoutGlobalNames(Procedure proc) {
+        if (_inoutGlobalNamesCache.TryGetValue(proc, out var cached)) {
+            return cached;
+        }
+
+        // Transitive closure over the call graph. Seed each reachable procedure
+        // with its own local inout set, then union in every callee's set. Guard
+        // against call-graph cycles (mutual recursion) with a visited set.
+        var callees = DirectCallees();
+        var names = new HashSet<string>();
+        var visited = new HashSet<Procedure>();
+        var stack = new Stack<Procedure>();
+        stack.Push(proc);
+        while (stack.Count > 0) {
+            var cur = stack.Pop();
+            if (!visited.Add(cur)) continue;
+            names.UnionWith(LocalInoutGlobalNames(cur));
+            if (callees.TryGetValue(cur, out var direct)) {
+                foreach (var callee in direct) {
+                    if (!visited.Contains(callee)) stack.Push(callee);
+                }
+            }
+        }
+
+        _inoutGlobalNamesCache[proc] = names;
+        return names;
+    }
+
     private void WriteProcedureHeader(Procedure proc, bool hasImplementation = false) {
-        // Modifies globals become inout params; read-only globals become input params.
-        var modifiesNames = new HashSet<string>(proc.Modifies.Select(m => m.Name));
+        // Modifies globals (and globals read via `old`, closed over the call
+        // graph) become inout params; the rest become read-only. See InoutGlobalNames.
+        var modifiesNames = InoutGlobalNames(proc);
         var modifiesGlobals = _globalVariables.Where(g => modifiesNames.Contains(g.Name)).ToList();
         var readOnlyGlobals = _globalVariables.Where(g => !modifiesNames.Contains(g.Name)).ToList();
 
