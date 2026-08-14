@@ -22,37 +22,8 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Clone Strata-CLI (pinned)
-        # Pinned to a known-good triple. Strata-CLI's lakefile floats its
-        # dependencies to `main`, so a fresh clone rebuilds against whatever
-        # Strata/Strata-DDM/Strata-Python happen to be at HEAD today — the
-        # upstream API has drifted and StrataMainLib no longer compiles
-        # against `main`. Pin the CLI commit and rewrite its lakefile revs to
-        # the sibling commits that formed the last CI-verified-green build.
-        env:
-          STRATA_CLI_REV:    c35654437c
-          STRATA_REV:        1024ac7c089f4a1e6e7ee9a639512d15fc934f65
-          STRATA_PYTHON_REV: ea14d036a7fd7e40afe580c0bcad937ce7cfacc3
-          STRATA_DDM_REV:    9d637231cf5b06fe8b93aa04949b19ce854e20a2
-        run: |
-          git clone https://github.com/strata-org/Strata-CLI.git StrataCLI
-          cd StrataCLI
-          git checkout "$STRATA_CLI_REV"
-          # awk state machine: for each [[require]] block, replace the rev = "..."
-          # line based on the block's name = "..." line. Exact-match on name so
-          # "Strata" does not eat "StrataPython" / "StrataDDM".
-          awk -v s="$STRATA_REV" -v p="$STRATA_PYTHON_REV" -v d="$STRATA_DDM_REV" '
-            /^\[\[require\]\]/ { name=""; in_req=1 }
-            in_req && /^name = "/ { match($0, /"[^"]*"/); n=substr($0, RSTART+1, RLENGTH-2); name=n }
-            in_req && /^rev = "/ {
-              new = (name=="Strata")?s:(name=="StrataPython")?p:(name=="StrataDDM")?d:""
-              if (new != "") { print "rev = \"" new "\""; next }
-            }
-            /^\[/ && !/^\[\[require\]\]/ { in_req=0 }
-            { print }
-          ' lakefile.toml > lakefile.toml.new && mv lakefile.toml.new lakefile.toml
-          echo "--- pinned lakefile.toml deps ---"
-          grep -E 'name =|rev =' lakefile.toml
+      - name: Clone Strata-CLI
+        run: git clone https://github.com/strata-org/Strata-CLI.git StrataCLI
 
       - name: Build Strata-CLI
         uses: leanprover/lean-action@v1
