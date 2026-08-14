@@ -425,15 +425,15 @@ public class StrataGenerator : ReadOnlyVisitor {
 
     private void EmitHeapFunctionsForType(Type ty) {
         WriteLine($"// Select function for {ty}");
-        WriteText($"function StrataHeapSelect_{ty}(h: StrataHeap, r: StrataRef, f: StrataField ");
+        WriteText($"function StrataHeapSelect_{ty}(h: StrataHeap, r: StrataRef, f: StrataField (");
         VisitType(ty);
-        WriteText(") : ");
+        WriteText(")) : ");
         VisitType(ty);
         WriteLine(";");
         WriteLine($"// Update function for {ty}");
-        WriteLine($"function StrataHeapUpdate_{ty}(h: StrataHeap, r: StrataRef, f: StrataField ");
+        WriteText($"function StrataHeapUpdate_{ty}(h: StrataHeap, r: StrataRef, f: StrataField (");
         VisitType(ty);
-        WriteText(", v: ");
+        WriteText("), v: ");
         VisitType(ty);
         WriteLine(") : StrataHeap;");
     }
